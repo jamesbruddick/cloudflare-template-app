@@ -1,0 +1,38 @@
+/* First-paint rules that must apply before the app's CSS exists - under `pnpm dev` that's until main.tsx
+   loads, and without them the Worker's crawler body flashes as unstyled text. A file, not an inline
+   <style> (the CSP forbids it). Keep it tiny, since it blocks first paint, and in step with Layout.tsx's
+   surface colours. */
+
+:root {
+  color-scheme: light dark;
+  /* slate-50 / slate-900 */
+  background-color: #f8fafc;
+  color: #0f172a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* slate-950 / slate-100 */
+    background-color: #020617;
+    color: #f1f5f9;
+  }
+}
+
+/* Tailwind's declarations, so the crawler body stays hidden pre-CSS. */
+.sr-only {
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border-width: 0;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  position: absolute;
+  overflow: hidden;
+}
+
+.noscript {
+  font-family: system-ui, sans-serif;
+  text-align: center;
+  padding: 4rem 1rem;
+}

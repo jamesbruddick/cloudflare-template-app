@@ -4,14 +4,15 @@
 
 Full-stack Cloudflare Workers template: Hono API + React 19 + Tailwind CSS 4,
 deployed as a single Worker via Wrangler. Fork it, keep the plumbing (build
-pipeline, RPC typing, security headers, test harness), replace the demo
-routes/UI/auth with real ones.
+pipeline, RPC typing, per-route document rendering, security headers, D1
+migrations, test harness), replace the demo routes/UI/auth with real ones.
 
 ## Commands
 
 ```sh
 pnpm install
 cp .dev.vars.example .dev.vars   # required for pnpm dev
+pnpm db:migrate:local            # apply migrations/ to the local D1 pnpm dev uses
 pnpm dev                         # Vite dev server — frontend + worker, one origin
 pnpm build                       # wrangler types + frontend tsc + vite build -> dist/
 pnpm deploy                      # build, then deploy:worker
@@ -21,14 +22,19 @@ pnpm lint                        # biome check .
 pnpm format                      # biome format --write .
 pnpm test                        # vitest run — full suite against real workerd
 pnpm types                       # regenerate worker-configuration.d.ts from wrangler.jsonc
+pnpm db:migrate:new <name>       # new numbered migration file
+pnpm db:migrate:remote           # apply migrations to production D1
 ```
 
 Run a single test:
 
 ```sh
 pnpm exec vitest run tests/api.test.ts
-pnpm exec vitest run -t "sets Content-Security-Policy on API responses"
+pnpm exec vitest run -t "answers an unknown URL with 404"
 ```
+
+Document tests read the built shell, so run `pnpm build` before `pnpm test`
+after touching `frontend/index.html` (a missing build makes every document 503).
 
 ---
 
@@ -53,29 +59,49 @@ JSX settings, React deps). Both extend `tsconfig.base.json` — add shared
 compiler options there, not in both children.
 
 ```
-src/index.ts               Hono API (worker entry point)
-src/middleware/headers.ts  Security headers + per-response CSP/HSTS/cache policy
+src/index.ts               Hono app (worker entry): one method chain + document catch-all
+src/document.ts            Renders each route's <head> into the built shell (HTMLRewriter)
+src/shared/seo.ts          Route metadata - isomorphic, read by worker AND SPA
+src/types/env.ts           AppEnv / AppContext (Bindings = generated `Env`)
+src/http/helpers.ts        apiError (error envelope), notFound, escapeHtml
+src/middleware/
+  headers.ts               Security headers + per-response CSP/nonce/HSTS/cache policy
+  requests.ts              sameOriginGuard (CSRF incl. JSON) + requestBodyLimit
+migrations/                D1 schema, one numbered SQL file per change
+vite-plugins.ts            generateSitemap, stripHtmlComments
 frontend/src/
   App.tsx                  Route table (react-router v8)
   main.tsx                 React entry point
   index.css                Tailwind entry
   components/
     ui/                    Reusable primitives (Card, Button, Input)
-    Layout.tsx             Shell chrome with <Outlet />
+    Layout.tsx             Shell chrome with <Outlet />; calls useRouteHead()
     ErrorBoundary.tsx      React error boundary
     AuthDemo.tsx           Self-contained auth demo widget
   pages/                   One default-exported component per route
-  lib/                     Non-component code (RPC client, useHead hook)
-frontend/public/           Static files copied to dist/client/ (including _headers)
-tests/                     Vitest tests, run inside workerd
+  lib/                     Non-component code (RPC client, use-head hooks)
+frontend/public/           Static files copied to dist/client/ (_headers, boot.css, icons, manifest)
+tests/                     Vitest tests, run inside workerd (setup.ts, helpers.ts)
 ```
 
 ### Import aliases
 
-`@/*` maps to `frontend/src/`, `@worker` maps to `src/index.ts`. Both are
-declared in `vite.config.ts` (runtime) **and** `frontend/tsconfig.json`
-(type-checker). Add to one without the other and you get a build/typecheck
-mismatch. `baseUrl` is not used — `paths` entries need a leading `./`.
+`@/*` → `frontend/src/`, `@worker` → `src/index.ts`, `@shared/*` →
+`src/shared/`. Declared in `vite.config.ts` (runtime) **and** the tsconfigs
+(type-checker); `@shared` also in `vitest.config.ts`. Add to one without the
+others and you get a build/typecheck mismatch. `baseUrl` is not used —
+`paths` entries need a leading `./`.
+
+**`src/shared/**` uses neither DOM nor Workers APIs** — the worker and the
+browser both import it (and Vite's config loader does too, in Node). Keep it
+pure functions over strings and data; rendering belongs in React or
+`document.ts`.
+
+**Config imports name their files.** Vite's native config loader resolves
+nothing, so the chain it loads (`vite-plugins.ts` → `src/shared/seo.ts` and
+anything that imports) uses `.ts` specifiers (`allowImportingTsExtensions` in
+`tsconfig.base.json`, safe because nothing emits JS). Everything else is
+extensionless.
 
 ### Type-safe RPC
 
@@ -84,14 +110,44 @@ mismatch. `baseUrl` is not used — `paths` entries need a leading `./`.
 chain** (separate `app.get(...)` statements instead of `.get(...).post(...)`)
 loses accumulated route types and breaks the client's type inference.
 
-### SPA routing
+Errors go through `apiError(c, status, code, message)` →
+`{ success: false, error: { code, message } }`. Its return type is inferred
+(a `TypedResponse`), which is what lets `hc` clients narrow on `'error' in
+body` — don't annotate it as `Response`. `onError` never returns
+`err.message` (D1 errors can carry internals).
 
-`wrangler.jsonc` sets `assets.run_worker_first: ["/api/*"]` — the Worker
-handles only API paths, everything else goes to Cloudflare's asset handler with
-`not_found_handling: "single-page-application"`. Without this, the Worker is
-invoked for every non-asset request and Hono's 404 pre-empts the fallback,
-breaking deep links. `App.tsx` uses `createBrowserRouter` (from `react-router`,
-not `react-router-dom`) with a catch-all `*` route for `NotFound.tsx`.
+### Routing and documents
+
+`wrangler.jsonc` sets `run_worker_first: ["/*", "!/assets/*", "!/boot.css", …]`
+— the worker sees **every document**, the hashed bundles and fixed-name static
+files stay on the CDN. **Adding a file to `frontend/public/` means adding its
+`!/` exclusion**, or each request for it costs an invocation (it still works:
+the catch-all passes file-shaped paths to `ASSETS`).
+
+Route order in `src/index.ts`: `/api/*` routes, then `.get('*')` last, which
+404s unknown `/api/*` paths as JSON, passes file-shaped paths (and Vite's `/@`
+paths in dev) to `ASSETS`, and renders everything else via `renderDocument`.
+
+`renderDocument` fetches the built `index.html` from `ASSETS` and streams in the
+route's title, description, OG/Twitter tags, robots, canonical, JSON-LD and an
+`sr-only` crawler body (h1 + links) — all from `resolveRouteMeta(pathname)` in
+`src/shared/seo.ts`. The SPA's `useRouteHead()` (called once, in `Layout`)
+applies the same metadata on client-side navigation. **Pages never set their
+own head**; they can read `useRouteMeta()`.
+
+- **A new route needs an entry in `seo.ts` as well as `App.tsx`.** Otherwise
+  it is served with a 404 status and `noindex` — fine in a browser, dropped by
+  crawlers. `tests/routes.test.ts` parses `App.tsx` and fails on the mismatch.
+- **HTMLRewriter only rewrites tags that exist** — removing a meta tag from
+  `index.html` removes it everywhere.
+- `index.html` comments are stripped at build (`stripHtmlComments`), so
+  comment it freely.
+- `sitemap.xml` is generated from `ENTRY_POINTS` at build — don't hand-write
+  one. `SITE_ORIGIN` in `seo.ts` (placeholder `https://example.com`) feeds
+  canonicals, `og:url` and the sitemap; `robots.txt` restates it.
+- `boot.css` holds the first-paint colours and `.sr-only`, so the crawler body
+  never flashes before the app CSS loads (under `pnpm dev`, index.css arrives
+  via JS). Keep it tiny and in step with `Layout`'s surface colours.
 
 ### Generated types
 
@@ -136,7 +192,7 @@ is `devDependencies`. Apply the same test when adding packages.
 
 - Tailwind classes only — no inline `style={{...}}` props (blocked by CSP)
 - Biome is the sole lint/format tool — don't add ESLint or Prettier. It reports
-  unused code as a *warning* and `biome check` exits 0 on warnings, so
+  unused code as a _warning_ and `biome check` exits 0 on warnings, so
   `noUnusedLocals`/`noUnusedParameters` in `tsconfig.base.json` are what
   actually fail CI on dead code
 - Don't swap the RPC client (`hc`) for manual `fetch` typing
@@ -147,51 +203,55 @@ is `devDependencies`. Apply the same test when adding packages.
 
 ### Headers — dual maintenance
 
-Static assets and API responses have **separate** header sources that must be
-kept in sync:
+| Scope         | Source                                           | Policy                                                   |
+| ------------- | ------------------------------------------------ | -------------------------------------------------------- |
+| API `/api/*`  | `API_CSP` (`middleware/headers.ts`)              | `default-src 'none'` + `X-Robots-Tag: noindex, nofollow` |
+| Documents     | `documentCsp(nonce)`                             | the app policy, with a fresh `script-src` nonce          |
+| Static assets | `frontend/public/_headers` (**don't delete it**) | the app policy, no nonce                                 |
 
-| Scope | Source | Covers |
-|-------|--------|--------|
-| HTML/JS/CSS | `frontend/public/_headers` | All static asset responses |
-| Worker responses | `src/middleware/headers.ts` | All Hono route responses |
-
-Both set: CSP, HSTS (preload), X-Frame-Options DENY, X-Content-Type-Options,
-Referrer-Policy, COOP, CORP, Permissions-Policy.
+The document policy and `_headers`' `/*` rule must match byte for byte minus
+the nonce — `api.test.ts` asserts it (vitest passes `_headers` in as
+`TEST_ASSET_HEADERS`). `_headers` never applies to a worker response.
+**Documents never get `default-src 'none'`** — it blanks the app.
 
 ### Content Security Policy
 
-The CSP is chosen **per response** in `responsePolicy`, because API and document
-responses have opposite needs:
-
-- **`/api/*`** — `default-src 'none'; base-uri 'self'; form-action 'self';
-  frame-ancestors 'none'`. JSON loads nothing and executes nothing, so the API
-  gets the strictest possible policy.
-- **Everything else** — the document CSP below, which must stay in sync with the
-  `/*` rule in `frontend/public/_headers`.
-
 ```
-default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:;
-font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self';
-form-action 'self'; frame-ancestors 'none'
+default-src 'self'; script-src 'self' 'nonce-…' https://static.cloudflareinsights.com;
+style-src 'self'; img-src 'self' data:; font-src 'self';
+connect-src 'self' https://cloudflareinsights.com; object-src 'none';
+base-uri 'self'; form-action 'self'; frame-ancestors 'none'
 ```
 
-No `'unsafe-inline'` in any directive. Since `style-src` has no
-`'unsafe-inline'`, React `style={{...}}` props are blocked under CSP3 — use
-Tailwind classes instead.
+No `'unsafe-inline'` in any directive, so React `style={{...}}` props are
+blocked — use Tailwind classes. The nonce exists **only for Cloudflare's
+injected inline scripts** (Bot Fight Mode's bootstrap changes per request, so
+no hash can pin it); nothing of ours reads it. It must be a real header, and is
+shared for an edge-cache entry's life — acceptable only because documents are a
+pure function of the pathname. The `cloudflareinsights` hosts allow Cloudflare
+Web Analytics; drop them from both files if you never enable it.
 
-Two deliberate carve-outs in `responsePolicy`:
+Carve-outs in `responsePolicy`:
 
 - **Dev server** — Vite injects an inline preamble script and opens an HMR
-  socket, which no production-shaped CSP can allow, so documents go out without
-  a CSP under `pnpm dev`. Gated on `import.meta.env.MODE === 'development'`,
-  **not** `DEV` — vitest also sets `DEV === true`, which would make the suite
-  assert the dev path.
+  socket, so documents go out without a CSP under `pnpm dev`. Gated on
+  `import.meta.env.MODE === 'development'`, **not** `DEV` — vitest also sets
+  `DEV === true`, which would make the suite assert the dev path.
 - **HSTS** — only sent when the request arrived over https, so plain-http LAN
   dev isn't pinned for a year.
 
 `responsePolicy` is registered **before** `securityHeaders`. Middleware unwinds
-in reverse, so `securityHeaders`' post-processing runs last and would otherwise
-overwrite the per-response CSP.
+in reverse, so `securityHeaders`' post-processing runs first and
+`responsePolicy` has the last word on anything conditional.
+
+### Request guards
+
+`sameOriginGuard` (all paths) refuses mutating requests whose
+`Sec-Fetch-Site` isn't `same-origin`/`none`, or whose `Origin` isn't the
+request's own. It replaces `hono/csrf`, which ignores JSON. A request with
+neither header passes (curl, server-to-server) — a browser can't suppress
+`Origin` cross-origin. `requestBodyLimit` caps `/api/*` bodies at 64 KB; a
+route that takes uploads should stream them and be exempted explicitly.
 
 ### Permissions-Policy
 
@@ -217,39 +277,23 @@ real auth — it exists to demonstrate the wiring.
 
 ## SEO
 
-### Static meta (index.html)
+See **Routing and documents** above — metadata is server-rendered per route
+from `src/shared/seo.ts`, so crawlers that run no JavaScript and link unfurlers
+see the right title/description/canonical, and unknown URLs get a real 404.
 
-- `<meta name="description">` — update for your project
-- Open Graph tags: `og:type`, `og:title`, `og:description`, `og:site_name`
-- Twitter Card: `summary` card with title and description
-- `<meta name="color-scheme" content="light dark">` for system theme support
-- `<link rel="icon" href="/favicon.svg">` — SVG favicon
-
-### Dynamic head management (useHead hook)
-
-`lib/use-head.ts` provides a `useHead()` hook for per-page:
-
-- **`title`** — sets `document.title` as `"Page | Site Name"`, restores on unmount
-- **`description`** — updates the meta description tag, restores on unmount
-- **`canonical`** — creates/updates `<link rel="canonical">`, cleans up on unmount
-
-Every page component should call `useHead()` with at minimum a `title`. For
-production, set `canonical` to the full URL to avoid duplicate content issues.
-
-### Crawler guidance
-
-`robots.txt` allows `/` and disallows `/api/` — crawlers shouldn't index API
-endpoints. For production, add a `sitemap.xml` to `frontend/public/` pointing
-to your canonical URLs.
-
-### SPA limitation
-
-Without SSR, crawlers see only `index.html`'s static meta tags. The `useHead()`
-hook updates the DOM client-side, which modern crawlers (Googlebot) handle, but
-isn't guaranteed for all. If SEO is critical, consider Cloudflare Workers SSR
-or a prerender service.
-
----
+- `robots`: `index` (entry points, self-referential canonical),
+  `noindex-follow` (crawlable interior), `noindex` (errors, private pages).
+  **Keep private pages out with `noindex`, not `robots.txt`** — a Disallow
+  stops the crawler ever reading the noindex.
+- `crawlLinksFor(pathname)` is what a `noindex, follow` page has to follow;
+  add contextual links (next page, parent) there as routes grow.
+- No `og:image` yet. Add a 1200×630 PNG (crawlers refuse SVG), the
+  `og:image*`/`twitter:image` tags to `index.html`, and rewrite them in
+  `document.ts` and `use-head.ts`; switch `twitter:card` to
+  `summary_large_image`.
+- Home-screen install: `site.webmanifest`, `apple-touch-icon.png` (square,
+  opaque — iOS masks it), `icon-192/512.png`. Regenerate them from your own
+  icon when you rebrand.
 
 ## Performance
 
@@ -259,12 +303,13 @@ or a prerender service.
 
 - **`/assets/*`** — `public, max-age=31536000, immutable`. Vite content-hashes
   these filenames, making them safe to cache indefinitely.
-- **`/index.html`** — `no-cache, must-revalidate`, set explicitly. The filename
-  never changes, so hard-caching would pin clients to stale builds.
-- **`/favicon.svg`** — one day. Unhashed, but cheap to re-fetch.
+- **Fixed-name files** (`boot.css`, icons, manifest, `sitemap.xml`) — one day.
 
-Worker responses are separate: `responsePolicy` defaults them to `no-store`
-unless the handler set its own `Cache-Control`. Keep this split when adding rules.
+Worker responses are separate: documents get `public, max-age=0,
+s-maxage=300, must-revalidate` and an ETag folded from the shell's ETag and the
+pathname (**never pass the shell's own ETag through** — it's identical for
+every route, so one page would 304 against another's copy). API responses
+default to `no-store` unless the handler set its own `Cache-Control`.
 
 ### Build optimization
 
@@ -286,34 +331,37 @@ unless the handler set its own `Cache-Control`. Keep this split when adding rule
 
 ### Framework
 
-Vitest via `@cloudflare/vitest-plugin` — tests run inside real `workerd`,
-not mocks or jsdom. Test bindings (`API_KEY`/`JWT_SECRET`) are set in
-`vitest.config.ts` under `miniflare.bindings`, independent of `.dev.vars`.
+Vitest 5 via `@cloudflare/vitest-plugin` — tests run inside real `workerd`,
+not mocks or jsdom. `vitest.config.ts` sets test bindings independent of
+`.dev.vars` (`API_KEY`/`JWT_SECRET`), and reads three things in Node to pass in
+as bindings (typed in `tests/env.d.ts`): the D1 migrations, `_headers`, and
+`App.tsx`'s source. Every outbound `fetch` returns a 502, so the suite never
+touches the network — stub `fetch` in a test that needs upstream behaviour.
+
+`tests/setup.ts` applies `migrations/` to a fresh D1 per test file. If a file
+truncates tables in `beforeEach`, never truncate `d1_migrations`.
 
 ### Coverage
 
-Tests cover two areas:
-
-1. **API route behavior** — status codes, response shapes, auth flow (valid key,
-   invalid key, missing key, valid token, invalid token, missing token)
-2. **Security headers** — the `default-src 'none'` API CSP, HSTS presence over
-   https and *absence* over plain http, the `no-store` default,
-   X-Frame-Options, X-Content-Type-Options, Permissions-Policy
-
-Fetch with an `http://` URL to exercise the non-https branch — `SELF.fetch`
-honours the scheme you give it.
+- `api.test.ts` — routes, the error envelope, the same-origin guard and body
+  limit, security headers (API CSP, nonce, HSTS over https only, the
+  `_headers` ↔ `documentCsp` match)
+- `seo.test.ts` — the resolver, and the documents the worker actually serves
+  (title, canonical, robots, JSON-LD, 404 status, ETag/304, stripped comments)
+- `routes.test.ts` — every `App.tsx` route resolves to a 200 document
 
 ### What tests cannot cover
 
-The vitest suite bypasses the static-asset router — `SELF` binds directly to the
-Worker, so `run_worker_first` and `not_found_handling` aren't exercised. Verify
-asset routing via `pnpm dev` (which mirrors production routing) or
-`wrangler dev -c dist/<name>/wrangler.json` against the built artifact.
+`SELF` binds directly to the worker, so `run_worker_first` and `_headers`
+aren't exercised. Document tests do reach `ASSETS`, which serves
+`dist/client` — **they need a build**. Verify asset routing via `pnpm dev` or
+`wrangler dev -c dist/<name>/wrangler.json`.
 
 ### Adding tests
 
 - Test files go in `tests/`, named `*.test.ts`
-- Use `SELF.fetch(...)` from `cloudflare:test` to exercise the full Hono app
+- Use `request(path)` / `postJson` / `errorCode` from `tests/helpers.ts`
+  (`SELF.fetch` with an `http://` URL to exercise the non-https branch)
 - Don't import handlers directly — test the whole request/response cycle
 - Don't add a jsdom runner or mock the Workers runtime
 
@@ -328,7 +376,10 @@ These are load-bearing architectural decisions, not incidental choices:
 - **Don't move tests to jsdom** — they must run in real `workerd`
 - **Don't add `@cloudflare/workers-types`** — types come from the generated file
 - **Don't add a `vite build` inside `frontend/`** — bundling happens at the root
-- **Don't remove `run_worker_first`** — deep links break without it
+- **Don't remove `run_worker_first`** — documents would lose their per-route
+  head and real status
+- **Don't add a route to `App.tsx` without one in `src/shared/seo.ts`**
+- **Don't edit an applied migration** — add a new numbered file
 - **Don't delete `_headers`** — it's the only CSP covering static assets
 - **Don't use `style={{...}}` props** — blocked by the strict CSP
 - **Don't break the Hono method chain** — route type inference depends on it
@@ -360,6 +411,15 @@ silently ignored. Use per-environment builds via the plugin's `config` customize
 (mutating-function form — the object form appends to arrays and produces
 duplicates).
 
+### D1
+
+Create the database once (`wrangler d1 create cloudflare-template-app`) and
+replace the placeholder `database_id` in `wrangler.jsonc` — only a real
+deploy reads it (`--dry-run`, dev and tests don't). Run `pnpm db:migrate:remote`
+**before** deploying code that depends on a new migration. Local dev state
+lives in `frontend/.wrangler/state` (the Vite root is `frontend/`), which is
+why the local scripts pass `--persist-to`.
+
 ### Secrets
 
 `API_KEY` and `JWT_SECRET` are declared in `wrangler.jsonc` under
@@ -383,7 +443,7 @@ Builds skip the check (`command === 'serve'` only) — CI has no `.dev.vars`.
   so a new advisory and a broken test can't hide behind each other
 
 `audit` is the whole advisory gate. `dependency-review-action` would scope the
-same check to what a PR *adds*, but its API needs GitHub Advanced Security on a
+same check to what a PR _adds_, but its API needs GitHub Advanced Security on a
 private repo — add it only if the repo is public.
 
 Actions are **pinned to commit SHAs**, not tags — a tag is mutable and whoever

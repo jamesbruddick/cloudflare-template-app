@@ -4,23 +4,44 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
-    <meta name="description" content="Full-stack starter on Cloudflare Workers with Hono and React." />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <title>Cloudflare Template App</title>
+    <meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#020617" media="(prefers-color-scheme: dark)" />
 
-    <!-- Open Graph -->
+    <!-- Baseline values describing the site as a whole. The Worker rewrites every one of these per route
+         before the document is served (src/document.ts), and useRouteHead() keeps them current across
+         client-side navigation - so these ship only if both are bypassed. Removing a tag here removes it
+         everywhere: HTMLRewriter can only rewrite tags that exist in this shell. Comments are stripped at
+         build (vite-plugins.ts), so note freely. -->
+    <title>Cloudflare Template App</title>
+    <meta name="description" content="Full-stack starter on Cloudflare Workers with Hono and React." />
+    <meta name="robots" content="index, follow" />
+
     <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Cloudflare Template App" />
     <meta property="og:title" content="Cloudflare Template App" />
     <meta property="og:description" content="Full-stack starter on Cloudflare Workers with Hono and React." />
-    <meta property="og:site_name" content="Cloudflare Template App" />
+    <meta property="og:url" content="https://example.com/" />
 
-    <!-- Twitter Card -->
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:title" content="Cloudflare Template App" />
     <meta name="twitter:description" content="Full-stack starter on Cloudflare Workers with Hono and React." />
+
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <!-- iOS ignores the SVG when saving to the home screen: it wants a PNG at this exact well-known name,
+         and falls back to a screenshot tile without one. Square and opaque - iOS applies its own mask. -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
+    <link rel="manifest" href="/site.webmanifest" />
+
+    <!-- Base surface colours and .sr-only, applied before the app's own CSS exists. Under `pnpm dev` Vite
+         serves index.css through the JS module graph - there is no stylesheet link until main.tsx loads -
+         so without this the crawler body the Worker renders into #root flashes as unstyled text. -->
+    <link rel="stylesheet" href="/boot.css" />
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <p class="noscript">This app needs JavaScript. Enable it and reload the page.</p>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -6,8 +6,9 @@
     "jsx": "react-jsx",
     "paths": {
       "@/*": ["./src/*"],
-      "@worker": ["../src/index.ts"]
+      "@worker": ["../src/index.ts"],
+      "@shared/*": ["../src/shared/*"]
     }
   },
-  "include": ["src/**/*", "../src/index.ts", "../worker-configuration.d.ts"]
+  "include": ["src/**/*", "../src/shared/**/*", "../src/index.ts", "../worker-configuration.d.ts"]
 }

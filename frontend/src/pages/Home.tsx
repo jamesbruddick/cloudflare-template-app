@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { AuthDemo } from '@/components/AuthDemo';
 import { Card } from '@/components/ui';
 import { client } from '@/lib/api';
-import { useHead } from '@/lib/use-head';
 
 interface HealthState {
   status: string;
@@ -10,10 +9,6 @@ interface HealthState {
 }
 
 export default function Home() {
-  useHead({
-    title: 'Home',
-    description: 'Full-stack starter on Cloudflare Workers with Hono and React.',
-  });
   const [health, setHealth] = useState<HealthState | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

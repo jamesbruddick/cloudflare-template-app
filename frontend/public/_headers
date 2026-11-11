@@ -1,16 +1,14 @@
-# Security headers for STATIC ASSET responses - the files served straight off the CDN without touching
-# the Worker (see `run_worker_first` in wrangler.jsonc).
-#
-# Worker responses do NOT get their policy from here: theirs comes from src/middleware/headers.ts. The
-# two must be kept in sync - see CLAUDE.md "Headers - dual maintenance". The `/*` rule below still
-# applies to index.html as defense in depth.
+# Headers for static assets served straight off the CDN without touching the Worker (see `run_worker_first`
+# in wrangler.jsonc). Documents get their policy from src/middleware/headers.ts instead; the CSP here must
+# match `documentCsp` there except for its per-request nonce, which a static file can't carry and no asset
+# needs. A test asserts this.
 
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
   Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
-  Referrer-Policy: no-referrer
+  Referrer-Policy: strict-origin-when-cross-origin
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Resource-Policy: same-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
@@ -19,9 +17,27 @@
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
 
-# The entry document's filename never changes, so hard-caching would pin visitors to a stale build.
-/index.html
-  Cache-Control: no-cache, must-revalidate
+# The first-paint stylesheet. Its filename never changes, but it blocks first paint, so it gets a day of
+# cache rather than a revalidation round trip on every visit - it holds a few colours and .sr-only.
+/boot.css
+  Cache-Control: public, max-age=86400
 
+# Fixed filenames (iOS looks for /apple-touch-icon.png by name), so they revalidate daily rather than
+# being cached immutably.
 /favicon.svg
+  Cache-Control: public, max-age=86400
+
+/apple-touch-icon.png
+  Cache-Control: public, max-age=86400
+
+/icon-192.png
+  Cache-Control: public, max-age=86400
+
+/icon-512.png
+  Cache-Control: public, max-age=86400
+
+/site.webmanifest
+  Cache-Control: public, max-age=86400
+
+/sitemap.xml
   Cache-Control: public, max-age=86400

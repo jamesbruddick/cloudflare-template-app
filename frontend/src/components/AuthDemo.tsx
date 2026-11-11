@@ -18,7 +18,7 @@ export function AuthDemo() {
 
       const loginBody = await loginRes.json();
       if ('error' in loginBody) {
-        throw new Error(loginBody.error);
+        throw new Error(loginBody.error.message);
       }
       const { token } = loginBody;
 

@@ -1,3 +1,12 @@
+# If Cloudflare's Managed robots.txt is on, it PREPENDS its block to this file; AI-crawler policy lives in
+# that dashboard, not here.
+#
+# `/api/` is blocked because JSON carries no meta tag (it gets an X-Robots-Tag header instead). Pages you
+# want kept out of search should be served `noindex` from src/shared/seo.ts, NOT listed here - a Disallow
+# stops the crawler ever reading the noindex, leaving the bare URL listable.
+
 User-agent: *
-Allow: /
 Disallow: /api/
+
+# Generated at build from ENTRY_POINTS in src/shared/seo.ts; change the origin with SITE_ORIGIN there.
+Sitemap: https://example.com/sitemap.xml

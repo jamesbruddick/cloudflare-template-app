@@ -1,6 +1,12 @@
 import { Link, Outlet } from 'react-router';
+import { useRouteHead } from '@/lib/use-head';
+
+const { commit, dirty } = __BUILD_VERSION__;
 
 export function Layout() {
+  // Keeps the head correct across in-app navigation; pages never set their own metadata.
+  useRouteHead();
+
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-50 to-white text-slate-900 dark:from-slate-950 dark:to-slate-900 dark:text-slate-100">
       <div className="mx-auto flex min-h-screen max-w-3xl flex-col px-5 py-6 sm:px-6 sm:py-16">
@@ -26,6 +32,15 @@ export function Layout() {
           <span>Vite</span>
           <span aria-hidden="true">·</span>
           <span>Tailwind CSS</span>
+          {commit && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span className="font-mono" title="The commit this build came from">
+                {commit}
+                {dirty && '-dirty'}
+              </span>
+            </>
+          )}
         </footer>
       </div>
     </main>

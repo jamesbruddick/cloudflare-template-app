@@ -1,9 +1,11 @@
+import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { cloudflare } from '@cloudflare/vite-plugin';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
+import { generateSitemap, stripHtmlComments } from './vite-plugins.ts';
 
 /**
  * Strip comments from JSONC. String-aware, so a `//` inside a value (a URL, a path) survives and only
@@ -118,6 +120,18 @@ function assertDevSecrets(): void {
   process.exit(1);
 }
 
+/** The build's commit for the footer, "dirty" when uncommitted. Resolved here, so nothing is generated or kept in sync. */
+function buildVersion(): { commit: string; dirty: boolean } {
+  try {
+    const commit = execSync('git rev-parse --short HEAD', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const status = execSync('git status --porcelain', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    return { commit: commit.trim(), dirty: status.trim().length > 0 };
+  } catch {
+    // Outside a git checkout (or before the first commit), the badge just doesn't render.
+    return { commit: '', dirty: false };
+  }
+}
+
 export default defineConfig(({ command }) => {
   // Dev only. A build produces an artifact that reads its secrets from the deployed environment, so it
   // has no business requiring them here - and CI builds without a .dev.vars.
@@ -125,10 +139,15 @@ export default defineConfig(({ command }) => {
 
   return {
     root: 'frontend',
+    define: {
+      __BUILD_VERSION__: JSON.stringify(buildVersion()),
+    },
     resolve: {
       alias: {
         '@': path.resolve(import.meta.dirname, 'frontend/src'),
         '@worker': path.resolve(import.meta.dirname, 'src/index.ts'),
+        // Isomorphic code imported by both the Worker and the browser.
+        '@shared': path.resolve(import.meta.dirname, 'src/shared'),
       },
     },
     plugins: [
@@ -137,6 +156,8 @@ export default defineConfig(({ command }) => {
       cloudflare({
         configPath: path.resolve(import.meta.dirname, 'wrangler.jsonc'),
       }),
+      generateSitemap(),
+      stripHtmlComments(),
     ],
     build: {
       outDir: '../dist',

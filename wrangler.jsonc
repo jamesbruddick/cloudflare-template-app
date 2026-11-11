@@ -18,11 +18,35 @@
     "directory": "./dist/client",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    // Only the API reaches the Worker; everything else goes to the asset handler, which serves the SPA
-    // shell for unmatched paths. Broadening this to "/*" routes documents through Hono too, and since
-    // there is no document handler here they all 404 - deep links and the entry page alike.
-    "run_worker_first": ["/api/*"]
+    // The Worker sees every document (it renders each route's <head> - src/document.ts); the hashed bundles
+    // and fixed-name static files stay on the CDN. Add a new file in frontend/public to this list too, or
+    // every request for it costs a Worker invocation. boot.css above all, since it blocks first paint.
+    "run_worker_first": [
+      "/*",
+      "!/assets/*",
+      "!/boot.css",
+      "!/favicon.svg",
+      "!/apple-touch-icon.png",
+      "!/icon-192.png",
+      "!/icon-512.png",
+      "!/site.webmanifest",
+      "!/robots.txt",
+      "!/sitemap.xml"
+    ]
   },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cloudflare-template-app",
+      // Placeholder: `wrangler d1 create <name>` prints the real id. Local dev and the test suite never read
+      // it (both run a local SQLite), so only a deploy needs it replaced.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      // The schema's only source of truth: one numbered file per change, applied through
+      // `pnpm db:migrate:*` and by tests/setup.ts. Wrangler's default is already ./migrations - it is
+      // declared so the location is visible in the config rather than implied.
+      "migrations_dir": "migrations"
+    }
+  ],
   "secrets": {
     "required": ["API_KEY", "JWT_SECRET"]
   }

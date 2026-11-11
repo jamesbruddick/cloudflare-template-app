@@ -3,7 +3,10 @@
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ESNext"],
-    "types": ["node", "@cloudflare/vitest-plugin/types"]
+    "types": ["node", "@cloudflare/vitest-plugin/types"],
+    "paths": {
+      "@shared/*": ["./src/shared/*"]
+    }
   },
   "include": ["src/**/*", "tests/**/*", "worker-configuration.d.ts"]
 }

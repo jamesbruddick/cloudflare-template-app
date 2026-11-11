@@ -17,26 +17,20 @@ updates:
       semver-major-days: 14
       semver-minor-days: 7
       semver-patch-days: 3
-    ignore:
-      # @cloudflare/vitest-plugin peers on vitest ^4.1.0, so a vitest 5 bump can't install cleanly and
-      # the suite wouldn't run under it. Minors and patches still flow. Drop this once the plugin's
-      # peerDependencies accept 5 - `npm view @cloudflare/vitest-plugin peerDependencies` says.
-      - dependency-name: 'vitest'
-        update-types: ['version-update:semver-major']
     groups:
       # The Cloudflare toolchain releases in lockstep; a partial bump tends to break the build.
       cloudflare:
         patterns:
-          - '@cloudflare/*'
-          - 'wrangler'
-          - 'miniflare'
+          - "@cloudflare/*"
+          - "wrangler"
+          - "miniflare"
       react:
         patterns:
-          - 'react'
-          - 'react-dom'
-          - 'react-router'
-          - '@types/react'
-          - '@types/react-dom'
+          - "react"
+          - "react-dom"
+          - "react-router"
+          - "@types/react"
+          - "@types/react-dom"
       dev-dependencies:
         dependency-type: development
 
