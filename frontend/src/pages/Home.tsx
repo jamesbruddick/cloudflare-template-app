@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AuthDemo } from '@/components/AuthDemo';
 import { Card } from '@/components/ui';
-import { client } from '@/lib/api';
+import { client, failureText, unwrap } from '@/lib/api';
 
 interface HealthState {
   status: string;
@@ -16,19 +16,14 @@ export default function Home() {
   useEffect(() => {
     async function load() {
       try {
-        const [healthRes, helloRes] = await Promise.all([client.api.health.$get(), client.api.hello.$get()]);
-
-        if (!healthRes.ok || !helloRes.ok) {
-          throw new Error('Request to the API failed');
-        }
-
-        const healthData = await healthRes.json();
-        const helloData = await helloRes.json();
-
+        const [healthData, helloData] = await Promise.all([
+          client.api.health.$get().then(res => unwrap<HealthState>(res)),
+          client.api.hello.$get().then(res => unwrap<{ message: string }>(res)),
+        ]);
         setHealth(healthData);
         setMessage(helloData.message);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unknown error');
+        setError(failureText(err));
       }
     }
 

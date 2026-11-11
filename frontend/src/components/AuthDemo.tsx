@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Button, Card, Input } from '@/components/ui';
-import { client } from '@/lib/api';
+import { client, failureText, unwrap } from '@/lib/api';
 
 export function AuthDemo() {
   const [apiKey, setApiKey] = useState('');
@@ -14,22 +14,11 @@ export function AuthDemo() {
     setResult(null);
 
     try {
-      const loginRes = await client.api.login.$post({}, { headers: { 'x-api-key': apiKey } });
-
-      const loginBody = await loginRes.json();
-      if ('error' in loginBody) {
-        throw new Error(loginBody.error.message);
-      }
-      const { token } = loginBody;
-
-      const protectedRes = await client.api.protected.$get({}, { headers: { Authorization: `Bearer ${token}` } });
-      if (!protectedRes.ok) {
-        throw new Error('Protected route rejected the token');
-      }
-      const { message } = await protectedRes.json();
+      const { token } = await unwrap<{ token: string }>(await client.api.login.$post({}, { headers: { 'x-api-key': apiKey } }));
+      const { message } = await unwrap<{ message: string }>(await client.api.protected.$get({}, { headers: { Authorization: `Bearer ${token}` } }));
       setResult(message);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      setError(failureText(err));
     } finally {
       setLoading(false);
     }

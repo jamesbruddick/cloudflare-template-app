@@ -96,6 +96,7 @@ read the id.
 - `pnpm db:migrate:local`: apply to the local database `pnpm dev` uses
 - `pnpm db:migrate:remote`: apply to production (run before deploying code
   that needs the change)
+- `pnpm db:pull`: replace the local database with a copy of production
 
 Never edit a migration that has been applied anywhere; add a new one. The test
 suite applies the same files to a fresh database per test file.
@@ -135,6 +136,7 @@ browsers every time, with a per-route ETag.
 | `pnpm lint`                                            | Check formatting and lint rules with Biome                     |
 | `pnpm format`                                          | Auto-format with Biome                                         |
 | `pnpm db:migrate:new` / `:local` / `:remote` / `:list` | Create, apply or list D1 migrations                            |
+| `pnpm db:pull`                                         | Replace the local D1 database with a copy of production        |
 
 `worker-configuration.d.ts` is generated (gitignored) — run `pnpm types` after
 changing `wrangler.jsonc` (bindings, secrets, etc.), and again after

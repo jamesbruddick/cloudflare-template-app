@@ -1,18 +1,16 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { CrashPage } from '@/pages/ErrorPage';
 
-interface Props {
-  children: ReactNode;
-}
+/**
+ * Last-resort boundary around the router, for anything rendered outside it (providers added to main.tsx).
+ * It never sees a page's error: React Router catches everything a route throws first, and `RouteCrashPage`
+ * (the routes' `errorElement`) renders those.
+ */
+export class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+  override state = { hasError: false };
 
-interface State {
-  error: Error | null;
-}
-
-export class ErrorBoundary extends Component<Props, State> {
-  override state: State = { error: null };
-
-  static getDerivedStateFromError(error: Error): State {
-    return { error };
+  static getDerivedStateFromError() {
+    return { hasError: true };
   }
 
   override componentDidCatch(error: Error, info: ErrorInfo) {
@@ -20,17 +18,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   override render() {
-    if (this.state.error) {
-      return (
-        <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-          <div className="max-w-sm rounded-xl border border-red-200 bg-red-50 p-6 text-center dark:border-red-900/60 dark:bg-red-950/40">
-            <h1 className="text-lg font-semibold text-red-800 dark:text-red-300">Something went wrong</h1>
-            <p className="mt-2 text-sm text-red-700 dark:text-red-400">{this.state.error.message}</p>
-          </div>
-        </main>
-      );
-    }
-
-    return this.props.children;
+    if (!this.state.hasError) return this.props.children;
+    return <CrashPage standalone />;
   }
 }

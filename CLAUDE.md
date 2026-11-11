@@ -24,6 +24,7 @@ pnpm test                        # vitest run — full suite against real worker
 pnpm types                       # regenerate worker-configuration.d.ts from wrangler.jsonc
 pnpm db:migrate:new <name>       # new numbered migration file
 pnpm db:migrate:remote           # apply migrations to production D1
+pnpm db:pull                     # replace local D1 with a copy of production
 ```
 
 Run a single test:
@@ -76,7 +77,7 @@ frontend/src/
   components/
     ui/                    Reusable primitives (Card, Button, Input)
     Layout.tsx             Shell chrome with <Outlet />; calls useRouteHead()
-    ErrorBoundary.tsx      React error boundary
+    ErrorBoundary.tsx      Last-resort boundary outside the router
     AuthDemo.tsx           Self-contained auth demo widget
   pages/                   One default-exported component per route
   lib/                     Non-component code (RPC client, use-head hooks)
@@ -112,9 +113,16 @@ loses accumulated route types and breaks the client's type inference.
 
 Errors go through `apiError(c, status, code, message)` →
 `{ success: false, error: { code, message } }`. Its return type is inferred
-(a `TypedResponse`), which is what lets `hc` clients narrow on `'error' in
-body` — don't annotate it as `Response`. `onError` never returns
+(a `TypedResponse`) — don't annotate it as `Response`. `onError` re-shapes
+Hono's own `HTTPException`s (the JWT check's 401 → `unauthorized`, keeping
+`WWW-Authenticate`) into the same envelope, and never returns a thrown error's
 `err.message` (D1 errors can carry internals).
+
+On the client, **call sites go through `unwrap<T>(res)`** (`lib/api.ts`): it
+returns the success body or throws an `ApiFailure` (`code`, `message`,
+`status`) from the envelope, so nothing re-checks `ok`. Show a caught error with
+`failureText(err)` — the server's message for an `ApiFailure`, a generic line
+for anything else (never a bug's own text).
 
 ### Routing and documents
 
@@ -166,9 +174,15 @@ UI is organized as reusable building blocks. Shared primitives live in
 `components/ui/` and are re-exported from `components/ui/index.ts`:
 
 - **`Card`** — neutral container with border, shadow, dark mode
-- **`Button`** — primary action button with disabled state
-- **`ButtonLink`** — same styling as Button but renders a react-router `Link`
-- **`Input`** — styled text input with focus ring and dark mode
+- **`Button`** — `variant` (`primary` / `secondary` / `danger`) and `size`
+  (`md` / `sm`). Defaults to `type="button"` (HTML's default is `submit`);
+  pass `type="submit"` in a form. **Size it with `size`, never padding
+  classes** — two utilities for one property resolve by stylesheet order, not
+  class order, so a `py-1` in `className` silently loses
+- **`ButtonLink`** — the same styling on a react-router `Link`, for any action
+  that navigates
+- **`Input`** — styled text input. No `focus:outline-none`: the global
+  `:focus-visible` ring is its focus indicator
 
 Use these instead of duplicating Tailwind class strings. When adding new
 primitives, follow the same pattern: accept `ComponentProps<element>`, spread
@@ -181,6 +195,39 @@ props, compose `className` with a `base` constant.
 - **Self-contained feature widgets** (like `AuthDemo`) go in `components/`
   with their own state, not in `pages/`
 - **Don't create empty folders** — add a directory when something goes in it
+
+### Errors in the UI
+
+React Router catches everything a route throws before any React error
+boundary sees it, so **errors are handled by route `errorElement`s**
+(`RouteCrashPage` in `pages/ErrorPage.tsx`): a pathless wrapper route catches
+page errors inside the layout (header and footer stay), and the layout route's
+own `errorElement` renders standalone. A thrown 404 response renders
+`NotFound`. `ErrorBoundary` in `main.tsx` only guards what sits outside the
+router. Neither ever shows `error.message` to visitors.
+
+If you add `lazy` routes: React Router renders a route whose lazy import
+rejected (a chunk renamed by a redeploy) as a blank page with nothing to catch.
+Resolve a failed import to a component that rethrows the error on render, so
+the `errorElement` shows, and offer a reload there.
+
+### Accessibility (WCAG 2.2 AA)
+
+These look removable but are not:
+
+- **The skip link** (first in `Layout`) and `<main id="main" tabIndex={-1}>`
+  around the `Outlet` (**2.4.1**). Pages render inside that `main` — don't
+  nest another.
+- **The global `:focus-visible` ring** in `index.css` (**2.4.7**, **1.4.11**).
+  Never `focus:outline-none` a control.
+- **`prefers-reduced-motion`** in `index.css` collapses animations and
+  transitions (**2.3.3**).
+- **`text-slate-400` on a light surface fails 4.5:1** — use `slate-500` or
+  darker for text there (`slate-400` is fine on `slate-950`).
+- **`<ScrollRestoration />`** in `Layout`: a new page starts at the top, Back
+  returns to the previous offset.
+- **No ARIA role without its keyboard contract** — a disclosure, not
+  `role="menu"`, unless you implement the menu keys.
 
 ### Dependency placement
 
@@ -419,6 +466,11 @@ deploy reads it (`--dry-run`, dev and tests don't). Run `pnpm db:migrate:remote`
 **before** deploying code that depends on a new migration. Local dev state
 lives in `frontend/.wrangler/state` (the Vite root is `frontend/`), which is
 why the local scripts pass `--persist-to`.
+
+`pnpm db:pull` (`scripts/db-pull.sh`) replaces the local database with a copy
+of production — destructive locally, read-only remotely. Schema and data are
+exported separately because a combined dump can insert a child table's rows
+before its parent table exists.
 
 ### Secrets
 

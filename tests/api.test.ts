@@ -66,9 +66,11 @@ describe('Worker API Routes', () => {
     expect(data.expiresIn).toBeGreaterThan(0);
   });
 
-  it('GET /api/protected rejects requests without a token', async () => {
+  it('GET /api/protected rejects requests without a token, in the error envelope', async () => {
+    // The JWT middleware throws a plain-text 401; onError re-shapes it so clients `unwrap` it like any other.
     const response = await request('/api/protected');
     expect(response.status).toBe(401);
+    expect(await errorCode(response)).toBe('unauthorized');
   });
 
   it('GET /api/protected rejects a malformed Bearer token', async () => {

@@ -1,1 +1,71 @@
 @import "tailwindcss";
+
+/* style-src has no 'unsafe-inline', so anything that would be an inline style lives here instead. */
+
+/* No double-tap zoom delay on controls. Pinch-zoom still works. */
+a,
+button,
+input,
+select,
+textarea,
+[role="button"] {
+  touch-action: manipulation;
+}
+
+/* A fast double-click shouldn't highlight a control's label. */
+button,
+label,
+select,
+summary,
+[role="button"] {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* The keyboard focus ring, everywhere (WCAG 2.4.7). Don't add `focus:outline-none` to a control: a border
+   tint alone fails 1.4.11. */
+:focus-visible {
+  outline: 2px solid var(--color-indigo-500);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* The bypass link (WCAG 2.4.1), first in Layout: off-screen until it takes keyboard focus. */
+.skip-link {
+  position: fixed;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 100;
+  padding: 0.625rem 1rem;
+  border-radius: 0.5rem;
+  background: var(--color-indigo-600);
+  color: var(--color-white);
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-decoration: none;
+  transform: translateY(calc(-100% - 1rem));
+}
+.skip-link:focus,
+.skip-link:focus-visible {
+  transform: translateY(0);
+}
+
+/* #main takes focus from the skip link, but a ring round the whole column reads as a glitch. */
+main:focus,
+main:focus-visible {
+  outline: none;
+}
+
+/* Vestibular safety (WCAG 2.3.3): effectively no motion, while anything listening for animationend or
+   transitionend still gets its event. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

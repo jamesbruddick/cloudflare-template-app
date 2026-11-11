@@ -72,8 +72,18 @@ const app = new Hono<AppEnv>()
 app.notFound(c => notFound(c));
 
 app.onError((err, c) => {
-  // Thrown by Hono's own middleware (the JWT check's 401, the body limit) with its intended response.
-  if (err instanceof HTTPException) return err.getResponse();
+  // Thrown by Hono's own middleware (the JWT check's 401). Re-shaped into the envelope so every API failure
+  // reads the same to `unwrap`, keeping the headers the middleware meant to send (WWW-Authenticate).
+  if (err instanceof HTTPException) {
+    const original = err.getResponse();
+    const res = c.json(
+      { success: false as const, error: { code: err.status === 401 ? 'unauthorized' : 'request_failed', message: err.message || 'Request failed.' } },
+      err.status,
+    );
+    const challenge = original.headers.get('WWW-Authenticate');
+    if (challenge) res.headers.set('WWW-Authenticate', challenge);
+    return res;
+  }
   // Never return err.message: D1 and upstream errors can carry internal detail.
   console.error('Unhandled error:', c.req.method, c.req.path, err);
   return apiError(c, 500, 'internal_error', 'Something went wrong.');
