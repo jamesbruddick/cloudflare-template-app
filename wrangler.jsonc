@@ -38,9 +38,9 @@
     {
       "binding": "DB",
       "database_name": "cloudflare-template-app",
-      // Placeholder: `wrangler d1 create <name>` prints the real id. Local dev and the test suite never read
-      // it (both run a local SQLite), so only a deploy needs it replaced.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      // This template's own database. In a fork, `wrangler d1 create <name>` prints the id to put here. Local
+      // dev and the test suite never read it (both run a local SQLite) - only a deploy does.
+      "database_id": "f118006a-4385-4112-9110-415f15b5ed3b",
       // The schema's only source of truth: one numbered file per change, applied through
       // `pnpm db:migrate:*` and by tests/setup.ts. Wrangler's default is already ./migrations - it is
       // declared so the location is visible in the config rather than implied.
